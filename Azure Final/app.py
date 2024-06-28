@@ -32,7 +32,7 @@ db_params = {
     # 'port': 'your_port'
 }
 
-prompt = """Give the name of %s after 'Food:' and specify all 'Raw Material:', Ingredients -> Components (contains materials that make up the raw mmaterials or displays 'None') separately under 'ingredients:' in new lines. Start each list with commas. In the next line, state 'hazards:', followed by the health hazards this food item can cause. Then, in the next line, state 'allergies:', followed by all the allergies this food item can cause. Ensure there are no empty lines or extra white spaces and also give the classification like Veg or Non-Veg.
+prompt = """Give the name of '%s' after 'Food:' and specify all 'Raw Material:', Ingredients -> Components (contains materials that make up the raw mmaterials or displays 'None') separately under 'ingredients:' in new lines. Start each list with commas. In the next line, state 'hazards:', followed by the health hazards this food item can cause. Then, in the next line, state 'allergies:', followed by all the allergies this food item can cause. Ensure there are no empty lines or extra white spaces and also give the classification like Veg or Non-Veg.
 
 Example:
 
@@ -47,7 +47,9 @@ NOTE: THERE HAS TO BE EITHER 'NONE' OR COMPONENTS THAT MAKE UP THE RAW MATERIALS
 eg <raw material name> (componatents used to make it), <raw material name> (NONE) ,<health hazards> (NONE), <allergies> (NONE)
 """
 def display(response):
+    print(response)
     lists = response.split('\n')
+    if 'Raw Material:' not in response: raise AttributeError
     biggest = 0
     for i, list in enumerate(lists):
         st = list.find(':')
@@ -115,20 +117,16 @@ def text(TEXT):
         dic = display(res)
         return dic
     except google.api_core.exceptions.InternalServerError: return text(TEXT)
+    except google.api_core.exceptions.ResourceExhausted: return 'Product Not Found'
     except AttributeError: return text(TEXT)
     except IndexError: return text(TEXT)
+    
 def img(IMAGE):
-    try:
-        response = model.generate_content([prompt % 'this food item', IMAGE], stream=True)
-        response.resolve()
-        res = response.text.replace('*',"")
-        print(res)
-        print('IMAGE DONE PROCESSING')
-        dic = display(res)
-        return  dic
-    except google.api_core.exceptions.InternalServerError: return img(IMAGE)
-    except AttributeError: return img(IMAGE)
-    except IndexError: return img(IMAGE)
+    response = model.generate_content(['Give the name of the Food item/product shown in the image in lowercase', IMAGE], stream=True)
+    response.resolve()
+    res = response.text.replace('*',"")
+    print('Retrieved Food Image:',res)
+    return res
     
 def get_food_name_openfoodfacts(barcode):
     api_url = f'https://world.openfoodfacts.org/api/v0/product/{barcode}.json'
@@ -189,7 +187,7 @@ app.register_blueprint(swaggerui_blueprint)
 #DATABASE
 def convert_format(input_data):
     output_data = {
-        "action": "insert_by_barcode",
+        "action": input_data['action'],
         "barcode_number": input_data['barcode_number'],
         "product_name": input_data['product_name'],
         "classification": input_data['classification'][0],  # Assume it's Vegetarian
@@ -298,31 +296,129 @@ def retrieve_products_and_ingredients_by_barcode():
     except Exception as e:
         return jsonify({"error": f"Error retrieving data: {e}"}), 500
     
+def insert_product_and_ingredients_by_product_name():
+    try:
+        print('\nInserting product in database:')
+        connection = psycopg2.connect(**db_params)
+        cursor = connection.cursor()
+        
+        cursor.execute('SELECT count(*) FROM product')
+        code = ''.join([chr(int(i)) for i in str(cursor.fetchone()[0])])
+        print('ID:',code)
+        
+        product_name = request.json.get('product_name')
+        classification = request.json.get('classification')
+        ingredients = request.json.get('ingredients', [])
+        components = request.json.get('components', [])
+        hazards = request.json.get('hazards', [])
+        allergies = request.json.get('allergies', [])
+
+        sql_command = """
+            CALL insert_product_and_ingredients(
+                %s::varchar, %s::varchar, %s::varchar, %s::varchar[], %s::varchar[], %s::varchar[], %s::varchar[]
+            )
+        """
+
+        cursor.execute(sql_command, (
+            code,
+            product_name,
+            classification,
+            ingredients,
+            components,
+            hazards,
+            allergies
+        ))
+
+        connection.commit()
+
+        response = {
+            'message': 'Stored procedure successfully called.'
+        }
+
+    except (Exception, Error) as error:
+        print(Error)
+        response = {
+            'error': f'Error while calling stored procedure: {error}'
+        }
+        return jsonify(response), 201
+
+    finally:
+        if 'connection' in locals():
+            cursor.close()
+            connection.close()
+            print("PostgreSQL connection is closed.")
+
+    return jsonify(response), 200
+
+def retrieve_products_and_ingredients_by_product_name():
+    try:
+        print('\nRetrieving...')
+        product_name = request.json.get('product_name')
+        if not product_name:
+            return jsonify({"error": "Product name is required"}), 400
+
+        conn = psycopg2.connect(**db_params)
+        cur = conn.cursor()
+
+        cur.execute("SELECT * FROM retrieve_products_and_ingredients2(%s)", (product_name,))
+
+        results = cur.fetchall()
+
+        if results:
+            barcode_number = results[0][0]
+            classification = results[0][2]
+            table_data = []
+            for row in results:
+                ingredient_id = row[3]
+                ingredient_name = row[4]
+                component = row[5] if row[5] else "Not specified"
+                hazard = row[6] if row[6] else "None"
+                allergy = row[7] if row[7] else "None"
+
+                table_data.append({
+                    "ingredient_id": ingredient_id,
+                    "ingredient_name": ingredient_name,
+                    "component": component,
+                    "hazard": hazard,
+                    "allergy": allergy
+                })
+
+            response = {
+                "barcode_number": barcode_number,
+                "product_name": product_name,
+                "classification": classification,
+                "ingredients": table_data
+            }
+        else:
+            response = {"message": "No data found for the given product name."}
+            return jsonify(response), 201
+
+        cur.close()
+        conn.close()
+
+        return jsonify(response), 200
+    except Exception as e:
+        return jsonify({"error": f"Error retrieving data: {e}"}), 500
+    
 # Function to insert product and ingredients
 def insert_product_and_ingredients(payload):
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     if response.status_code == 200:
         print("Insert Response:", response.json())
     else:
-        print("Insert Failed:", response.status_code, response.text)
-
-# Function to retrieve product and ingredients
-def retrieve_product_and_ingredients(payload):
-    response = requests.post(url, headers=headers, data=json.dumps(payload))
-    if response.status_code == 200:
-        print("Retrieve Response:", response.json())
-    else:
-        print("Retrieve Failed:", response.status_code, response.text)
-    
+        print("Insert Failed:", response.status_code, response.text)    
 #DATABASE ROUTE
 @app.route('/product-and-ingredients', methods=['POST'])
 def handle_product_and_ingredients():
     action = request.json.get('action')
-
     if action == 'insert_by_barcode':
         return insert_product_and_ingredients_by_barcode()
     elif action == 'retrieve_by_barcode':
         return retrieve_products_and_ingredients_by_barcode()
+    elif action == 'insert_by_product':
+        return insert_product_and_ingredients_by_product_name()
+    elif action == 'retrieve_by_product':
+        return retrieve_products_and_ingredients_by_product_name()
     
     else:
         return jsonify({"error": "Invalid action specified"}), 400
@@ -332,8 +428,27 @@ def handle_product_and_ingredients():
 def using_name():
     if request.method == "POST":
         data = request.get_json()
-        data = text(data['foodItem'])
-        return jsonify(data), 200
+        name = data['foodItem'].lower()
+        print('Recieved Name:',name)
+        output_data = 'Error Occured'
+        
+        response = requests.post(url,json={'action':'retrieve_by_product', 'product_name':name})
+        if response.status_code == 200:
+            output_data = response.json()
+        else:
+            data = text(name)
+            if data == 'Product Not Found': return jsonify('Product Not Found'), 201
+            data['barcode_number'] = ''
+            data['action'] = "insert_by_product"
+            data['product_name'] = name.lower()
+            
+            output_data = convert_format(data)
+            print('INSERTING')
+            requests.post(url,json=output_data).json()
+            output_data = requests.post(url,json={'action':'retrieve_by_product', 'product_name':name}).json()
+
+        j=(json.dumps(output_data, indent=4))
+        return (j), 200
     
 @app.route("/barcode",methods=["POST"])
 def using_barcode():
@@ -342,19 +457,21 @@ def using_barcode():
         barcode = data['barcode']
         print('Recieved Barcode: ',barcode)
         output_data = 'Error Occured'
+        
         response = requests.post(url,json={'action':'retrieve_by_barcode', 'barcode_number':barcode})
         if response.status_code == 200:
             output_data = response.json()
         else:
             data = get_food_name_openfoodfacts(barcode)
+            if data == 'Product Not Found': return jsonify('Product Not Found'), 201
             data['barcode_number'] = barcode
             data['action'] = "insert_by_barcode"
             data['product_name'] = data['Food']
             
             output_data = convert_format(data)
             print('INSERTING')
-            output_data = insert_product_and_ingredients(output_data)
-            
+            insert_product_and_ingredients(output_data)
+            output_data = requests.post(url,json={'action':'retrieve_by_barcode', 'barcode_number':barcode}).json()
 
         j=(json.dumps(output_data, indent=4))
         return (j), 200
@@ -372,13 +489,14 @@ def using_barcodeImage():
             output_data = response.json()
         else:
             data = get_food_name_openfoodfacts(barcode)
+            if data == 'Product Not Found': return jsonify({'message':data}), 201
             data['barcode_number'] = barcode
             data['action'] = "insert_by_barcode"
             data['product_name'] = data['Food']
             
             output_data = convert_format(data)
-            
-            output_data = insert_product_and_ingredients(output_data)
+            insert_product_and_ingredients(output_data)
+            output_data = requests.post(url,json={'action':'retrieve_by_barcode', 'barcode_number':barcode}).json()
         
         j=(json.dumps(output_data, indent=4))
         return (j), 200
@@ -388,8 +506,25 @@ def using_foodImage():
     if request.method == "POST":
         data = request.get_json()
         im = Image.open(BytesIO(base64.b64decode(data['encodedImage'])))
-        dic = img(im)
-        return jsonify(dic), 200
+        name = img(im).lower()
+        
+        response = requests.post(url,json={'action':'retrieve_by_product', 'product_name':name})
+        if response.status_code == 200:
+            output_data = response.json()
+        else:
+            data = text(name)
+            if data == 'Product Not Found': return jsonify('Product Not Found'), 201
+            data['barcode_number'] = 'None'
+            data['action'] = "insert_by_product"
+            data['product_name'] = name.lower()
+            
+            output_data = convert_format(data)
+            print('INSERTING')
+            print(requests.post(url,json=output_data).json())
+            output_data = requests.post(url,json={'action':'retrieve_by_product', 'product_name':name}).json()
+
+        j=(json.dumps(output_data, indent=4))
+        return (j), 200
 
 if __name__ == "__main__":
     app.run(debug=True)
