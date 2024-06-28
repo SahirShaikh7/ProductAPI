@@ -342,7 +342,7 @@ def using_barcode():
         barcode = data['barcode']
         print('Recieved Barcode: ',barcode)
         output_data = 'Error Occured'
-        response = requests.post('http://127.0.0.1:5000/product-and-ingredients',json={'action':'retrieve_by_barcode', 'barcode_number':barcode})
+        response = requests.post(url,json={'action':'retrieve_by_barcode', 'barcode_number':barcode})
         if response.status_code == 200:
             output_data = response.json()
         else:
@@ -367,7 +367,7 @@ def using_barcodeImage():
         barcode = BarcodeReader(im)
         print('Recieved Barcode: ',barcode)
         output_data = 'Error Occured'
-        response = requests.post('http://127.0.0.1:5000/product-and-ingredients',json={'action':'retrieve_by_barcode', 'barcode_number':barcode})
+        response = requests.post(url,json={'action':'retrieve_by_barcode', 'barcode_number':barcode})
         if response.status_code == 200:
             output_data = response.json()
         else:
@@ -379,7 +379,6 @@ def using_barcodeImage():
             output_data = convert_format(data)
             
             output_data = insert_product_and_ingredients(output_data)
-            print(output_data)
         
         j=(json.dumps(output_data, indent=4))
         return (j), 200
