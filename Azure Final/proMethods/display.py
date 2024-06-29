@@ -1,5 +1,4 @@
 def display(response):
-    print(response)
     lists = response.split('\n')
     if 'Raw Material:' not in response: raise AttributeError
     biggest = 0
