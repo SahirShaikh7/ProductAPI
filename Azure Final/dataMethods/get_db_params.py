@@ -1,8 +1,8 @@
 db_params = {
-    'dbname': 'DatabaseAPI',
-    'user': 'postgres',
-    'password': 'Anayah@134',
-    'host': 'localhost',
+    'dbname': 'tixito',
+    'user': 'tixitoadmin',
+    'password': 'Senkusha@123',
+    'host': 'pgsql-dins-tixito001.postgres.database.azure.com',
     # 'port': 'your_port'
 }
 
