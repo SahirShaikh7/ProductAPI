@@ -3,7 +3,7 @@ db_params = {
     'user': 'tixitoadmin',
     'password': 'Senkusha@123',
     'host': 'pgsql-dins-tixito001.postgres.database.azure.com',
-    # 'port': 'your_port'
+    'port': '5432'
 }
 
 def get_db_params():
